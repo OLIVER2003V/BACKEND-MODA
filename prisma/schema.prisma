@@ -1,0 +1,136 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id               String            @id @default(cuid())
+  email            String            @unique
+  name             String?
+  isActive         Boolean           @default(true)
+  fcmToken         String?
+  password         String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  userAttributes   UserAttribute[]
+  closets          Closet[]
+  postInteractions PostInteraction[]
+
+  @@index([email])
+}
+
+model UserAttribute {
+  id String @id @default(cuid())
+
+  gender     String?
+  age        Int?
+  stature    Float?
+  weight     Float?
+  profession String?
+  testType   String?
+  faceType   String?
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+}
+
+model Closet {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId   String
+  user     User      @relation(fields: [userId], references: [id])
+  garments Garment[]
+
+  @@index([userId])
+}
+
+enum Category {
+  TOP
+  BOTTOM
+  DRESS
+  OUTERWEAR
+  FOOTWEAR
+  ACCESSORY
+}
+
+model Garment {
+  id          String    @id @default(cuid())
+  name        String?
+  description String?   @db.Text // Descripción generada por IA
+  category    Category?
+  path        String
+  pathLocal   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  closetId       String
+  closet         Closet          @relation(fields: [closetId], references: [id], onDelete: Cascade)
+  garmentOutfits GarmentOutfit[]
+
+  @@index([closetId])
+}
+
+model Outfit {
+  id          String   @id @default(cuid())
+  name        String?
+  score       Int      @default(0)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  garmentOutfits GarmentOutfit[]
+
+  posts Post[]
+}
+
+model GarmentOutfit {
+  id        String   @id @default(cuid())
+  garmentId String
+  outfitId  String
+  order     Int      @default(0) // Posición en el outfit (1=arriba, N=abajo)
+  createdAt DateTime @default(now())
+
+  garment Garment @relation(fields: [garmentId], references: [id])
+  outfit  Outfit  @relation(fields: [outfitId], references: [id])
+
+  @@index([garmentId])
+  @@index([outfitId])
+}
+
+model Post {
+  id               String            @id @default(cuid())
+  reactionCount    Int               @default(0)
+  outfitId         String
+  outfit           Outfit            @relation(fields: [outfitId], references: [id])
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  postInteractions PostInteraction[]
+
+  @@index([outfitId])
+}
+
+model PostInteraction {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+}
