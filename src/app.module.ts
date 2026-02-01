@@ -9,6 +9,8 @@ import { StorageModule } from './common/storage/storage.module';
 import { NotificationsModule } from './common/notifications/notifications.module';
 import { AiModule } from './features/ai/ai.module';
 import { PostModule } from './features/post/post.module';
+import { ChatModule } from './features/chat/chat.module';
+import { HairstyleModule } from './features/hairstyle/hairstyle.module';
 
 @Module({
   imports: [
@@ -21,7 +23,9 @@ import { PostModule } from './features/post/post.module';
     GarmentModule,
     OutfitModule,
     AiModule,
-    PostModule
+    PostModule,
+    ChatModule,
+    HairstyleModule,
   ],
   controllers: [],
   providers: [],

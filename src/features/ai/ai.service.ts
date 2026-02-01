@@ -645,6 +645,205 @@ REGLAS:
     }
   }
 
+  async describeHairstyle(
+    imageBuffer: Buffer,
+    mimeType: string,
+  ): Promise<{ description: string; gender: string }> {
+    try {
+      const validImageMimeTypes = [
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+      ];
+
+      let cleanMimeType = mimeType?.split(';')[0]?.trim()?.toLowerCase();
+      if (!cleanMimeType || !validImageMimeTypes.includes(cleanMimeType)) {
+        cleanMimeType = 'image/jpeg';
+      }
+
+      const base64Image = imageBuffer.toString('base64');
+      const dataUrl = `data:${cleanMimeType};base64,${base64Image}`;
+
+      const systemMessage = `Eres un experto estilista capilar. Tu tarea es analizar imágenes de peinados y describirlos en detalle.
+
+INSTRUCCIONES:
+1. Analiza la imagen del peinado
+2. Describe detalladamente:
+   - Tipo de corte (largo, medio, corto, rapado, pixie, bob, etc.)
+   - Textura del cabello (liso, ondulado, rizado, afro)
+   - Estilo (clásico, moderno, formal, casual, bohemio, punk)
+   - Volumen y forma
+   - Capas y estructura
+   - Para qué tipo de rostro es ideal (ovalado, redondo, cuadrado, corazón, alargado, diamante)
+   - Género recomendado (MALE, FEMALE, UNISEX)
+
+FORMATO DE RESPUESTA (JSON estricto):
+{
+  "description": "Descripción detallada del peinado en un párrafo (máximo 120 palabras)",
+  "gender": "MALE|FEMALE|UNISEX"
+}
+
+REGLAS:
+- El gender DEBE ser exactamente: MALE, FEMALE o UNISEX
+- Responde SOLO con el JSON, sin texto adicional ni bloques de código markdown`;
+
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemMessage },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Analiza este peinado:' },
+              { type: 'image_url', image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+        temperature: 0.2,
+        max_tokens: 500,
+      });
+
+      const responseText = completion.choices[0]?.message?.content;
+      if (!responseText) {
+        throw new BadRequestException('No se pudo obtener respuesta de la IA');
+      }
+
+      const cleanedResponse = responseText
+        .replace(/^```json\s*/, '')
+        .replace(/^```\s*/, '')
+        .replace(/\s*```$/, '')
+        .trim();
+
+      let result;
+      try {
+        result = JSON.parse(cleanedResponse);
+      } catch {
+        throw new BadRequestException('La respuesta de la IA no es un JSON válido');
+      }
+
+      const validGenders = ['MALE', 'FEMALE', 'UNISEX'];
+      if (!result.gender || !validGenders.includes(result.gender)) {
+        result.gender = 'UNISEX';
+      }
+
+      return {
+        description: result.description?.trim() || 'Sin descripción disponible',
+        gender: result.gender,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(`Error al describir el peinado: ${error.message}`);
+    }
+  }
+
+  async recommendHairstyle(
+    faceImageBuffer: Buffer,
+    mimeType: string,
+    hairstyles: { id: string; description: string }[],
+    userAttributes?: { gender?: string; faceType?: string },
+  ): Promise<{ hairstyleId: string; explanation: string }> {
+    try {
+      const validImageMimeTypes = [
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+      ];
+
+      let cleanMimeType = mimeType?.split(';')[0]?.trim()?.toLowerCase();
+      if (!cleanMimeType || !validImageMimeTypes.includes(cleanMimeType)) {
+        cleanMimeType = 'image/jpeg';
+      }
+
+      const base64Image = faceImageBuffer.toString('base64');
+      const dataUrl = `data:${cleanMimeType};base64,${base64Image}`;
+
+      const hairstylesList = hairstyles
+        .map((h, i) => `[${i}] ID: ${h.id}\n    Descripción: ${h.description}`)
+        .join('\n\n');
+
+      const userContext = userAttributes
+        ? `\nATRIBUTOS DEL USUARIO:\n- Género: ${userAttributes.gender || 'No especificado'}\n- Tipo de rostro: ${userAttributes.faceType || 'No especificado'}`
+        : '';
+
+      const systemMessage = `Eres un experto estilista capilar especializado en análisis facial y recomendación de peinados.
+
+INSTRUCCIONES:
+1. Analiza la foto del rostro del usuario en detalle:
+   - Forma del rostro (ovalado, redondo, cuadrado, corazón, alargado, diamante)
+   - Proporciones faciales (frente, mandíbula, pómulos)
+   - Rasgos destacados
+2. Compara con los peinados disponibles
+3. Selecciona el peinado MÁS compatible con la forma del rostro
+4. Explica detalladamente por qué ese peinado es el ideal
+${userContext}
+
+PEINADOS DISPONIBLES:
+${hairstylesList}
+
+FORMATO DE RESPUESTA (JSON estricto):
+{
+  "hairstyleId": "ID_DEL_PEINADO_ELEGIDO",
+  "explanation": "Explicación detallada de por qué este peinado es ideal para tu rostro (máximo 150 palabras)"
+}
+
+REGLAS:
+- El hairstyleId DEBE ser un ID válido de la lista de peinados
+- La explicación debe mencionar la forma del rostro detectada y cómo el peinado la complementa
+- Responde SOLO con el JSON, sin texto adicional ni bloques de código markdown`;
+
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemMessage },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Analiza mi rostro y recomiéndame el mejor peinado:' },
+              { type: 'image_url', image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+        max_tokens: 600,
+      });
+
+      const responseText = completion.choices[0]?.message?.content;
+      if (!responseText) {
+        throw new BadRequestException('No se pudo obtener respuesta de la IA');
+      }
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch {
+        // Fallback: intentar extraer JSON del texto
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new BadRequestException('No se pudo obtener una recomendación válida de la IA');
+        }
+        result = JSON.parse(jsonMatch[0]);
+      }
+
+      const validIds = hairstyles.map((h) => h.id);
+      if (!result.hairstyleId || !validIds.includes(result.hairstyleId)) {
+        result.hairstyleId = hairstyles[0].id;
+      }
+
+      return {
+        hairstyleId: result.hairstyleId,
+        explanation: result.explanation?.trim() || 'Peinado recomendado basado en tu tipo de rostro.',
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(`Error al recomendar peinado: ${error.message}`);
+    }
+  }
+
   async generateOutfit(generateOutfitDto: GenerateOutfitDto) {
     const { userId, event, weather } = generateOutfitDto;
 
