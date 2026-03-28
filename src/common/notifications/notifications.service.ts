@@ -47,14 +47,22 @@ export class NotificationsService {
       return;
     }
 
-    if (admin.apps.length === 0) {
-      admin.initializeApp({
-        credential: admin.credential.cert(firebase.keyFilePath),
-      });
-    }
+    try {
+      if (admin.apps.length === 0) {
+        admin.initializeApp({
+          credential: admin.credential.cert(firebase.keyFilePath),
+        });
+      }
 
-    this.initialized = true;
-    this.logger.log('Firebase initialized successfully');
+      this.initialized = true;
+      this.logger.log('Firebase initialized successfully');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown Firebase initialization error';
+      this.logger.warn(
+        `Firebase credentials are invalid or unreadable. Notifications service will be disabled. ${message}`,
+      );
+      this.initialized = false;
+    }
   }
 
   async sendNotification(dto: SendNotificationDto): Promise<NotificationResult> {
