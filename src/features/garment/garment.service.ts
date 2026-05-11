@@ -34,32 +34,32 @@ export class GarmentService {
       },
     });
 
-    // Subir imágenes, generar descripción y categoría con IA, y crear garments
-    const garmentPromises = files.map(async (file, index) => {
-      // Subir imagen al storage
+    // Procesar prendas secuencialmente para no saturar la API de IA (límite gratuito)
+    const garments: Awaited<ReturnType<typeof this.prisma.garment.create>>[] = [];
+
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+
       const uploaded = await this.storageService.uploadFile(file);
 
-      // Generar descripción y categoría con IA
+      let aiName: string | null = null;
       let description: string | null = null;
       let category: Category | null = null;
 
       try {
-        const aiResult = await this.aiService.describeGarment(
-          file.buffer,
-          file.mimetype,
-        );
+        const aiResult = await this.aiService.describeGarment(file.buffer, file.mimetype);
+        aiName = aiResult.name;
         description = aiResult.description;
-        // Convertir string a enum Category
         if (aiResult.category in Category) {
           category = aiResult.category as Category;
         }
       } catch (error) {
-        console.error(`Error al describir prenda ${index}:`, error.message);
-        // Si falla la IA, continuamos sin descripción ni categoría
+        console.error(`Error al describir prenda ${index}:`, (error as Error).message);
       }
 
-      return this.prisma.garment.create({
+      const garment = await this.prisma.garment.create({
         data: {
+          name: aiName,
           path: uploaded.url,
           pathLocal: dto.pathLocals[index],
           description,
@@ -67,9 +67,13 @@ export class GarmentService {
           closetId: closet.id,
         },
       });
-    });
+      garments.push(garment);
 
-    const garments = await Promise.all(garmentPromises);
+      // Pequeña pausa entre prendas para no saturar el rate limit de la API gratuita
+      if (index < files.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
 
     return {
       closet,
@@ -92,12 +96,31 @@ export class GarmentService {
       path = uploaded.url;
     }
 
+    let aiName: string | null = null;
+    let description: string | null = null;
+    let category: Category | null = null;
+
+    if (file) {
+      try {
+        const aiResult = await this.aiService.describeGarment(file.buffer, file.mimetype);
+        aiName = aiResult.name;
+        description = aiResult.description;
+        if (aiResult.category in Category) {
+          category = aiResult.category as Category;
+        }
+      } catch (error) {
+        console.error('Error al describir prenda con IA:', (error as Error).message);
+      }
+    }
+
     return this.prisma.garment.create({
       data: {
-        name: dto.name,
+        name: dto.name || aiName,
         path,
         pathLocal: dto.pathLocal,
         closetId: dto.closetId,
+        description,
+        category,
       },
     });
   }
@@ -107,6 +130,14 @@ export class GarmentService {
       include: {
         closet: true,
       },
+    });
+  }
+
+  findByUserId(userId: string) {
+    return this.prisma.garment.findMany({
+      where: { closet: { userId } },
+      include: { closet: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
@@ -165,6 +196,41 @@ export class GarmentService {
         name: dto.name,
         pathLocal: dto.pathLocal,
         path,
+        ...(dto.category !== undefined && { category: dto.category }),
+        ...(dto.description !== undefined && { description: dto.description }),
+      },
+    });
+  }
+
+  async regenerateDescription(id: string) {
+    const garment = await this.prisma.garment.findUnique({ where: { id } });
+    if (!garment) throw new NotFoundException(`Garment with ID ${id} not found`);
+    if (!garment.path) throw new NotFoundException('La prenda no tiene imagen asociada');
+
+    // Descargar la imagen desde la URL para pasársela a la IA
+    const https = await import('https');
+    const http = await import('http');
+    const imageBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const client = garment.path!.startsWith('https') ? https : http;
+      client.get(garment.path!, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      }).on('error', reject);
+    });
+
+    const aiResult = await this.aiService.describeGarment(imageBuffer, 'image/jpeg');
+
+    let category: Category | null = null;
+    if (aiResult.category in Category) category = aiResult.category as Category;
+
+    return this.prisma.garment.update({
+      where: { id },
+      data: {
+        name: garment.name || aiResult.name,
+        description: aiResult.description,
+        category,
       },
     });
   }

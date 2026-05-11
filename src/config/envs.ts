@@ -6,13 +6,19 @@ interface EnvVars {
   DATABASE_URL: string;
   JWT_SECRET: string;
   JWT_EXPIRES_IN?: number;
-  // Google Cloud Storage
-  GCS_BUCKET_NAME?: string;
-  GCS_KEYFILE_PATH?: string;
+  // Cloudinary
+  CLOUDINARY_CLOUD_NAME: string;
+  CLOUDINARY_API_KEY: string;
+  CLOUDINARY_API_SECRET: string;
   // Firebase
   FIREBASE_KEYFILE_PATH?: string;
-  OPENAI_API_KEY: string;
+  OPENAI_API_KEY?: string;
   GEMINI_API_KEY: string;
+  OPENROUTER_API_KEY: string;
+  GROQ_API_KEY: string;
+  HF_TOKEN: string;
+  CF_ACCOUNT_ID: string;
+  CF_API_TOKEN: string;
 }
 
 const envVarsSchema = joi
@@ -21,13 +27,19 @@ const envVarsSchema = joi
     DATABASE_URL: joi.string().required(),
     JWT_SECRET: joi.string().required(),
     JWT_EXPIRES_IN: joi.number().optional(),
-    // Google Cloud Storage
-    GCS_BUCKET_NAME: joi.string().optional(),
-    GCS_KEYFILE_PATH: joi.string().optional(),
+    // Cloudinary
+    CLOUDINARY_CLOUD_NAME: joi.string().required(),
+    CLOUDINARY_API_KEY: joi.string().required(),
+    CLOUDINARY_API_SECRET: joi.string().required(),
     // Firebase
     FIREBASE_KEYFILE_PATH: joi.string().optional(),
-    OPENAI_API_KEY: joi.string().required(),
+    OPENAI_API_KEY: joi.string().optional(),
     GEMINI_API_KEY: joi.string().required(),
+    OPENROUTER_API_KEY: joi.string().required(),
+    GROQ_API_KEY: joi.string().required(),
+    HF_TOKEN: joi.string().required(),
+    CF_ACCOUNT_ID: joi.string().required(),
+    CF_API_TOKEN: joi.string().required(),
   })
   .unknown(true);
 
@@ -44,10 +56,11 @@ export const envs = {
   databaseUrl: envVars.DATABASE_URL,
   jwtSecret: envVars.JWT_SECRET,
   jwtExpiresIn: envVars.JWT_EXPIRES_IN || 3600,
-  // Google Cloud Storage
-  gcs: {
-    bucketName: envVars.GCS_BUCKET_NAME,
-    keyFilePath: envVars.GCS_KEYFILE_PATH,
+  // Cloudinary
+  cloudinary: {
+    cloudName: envVars.CLOUDINARY_CLOUD_NAME,
+    apiKey: envVars.CLOUDINARY_API_KEY,
+    apiSecret: envVars.CLOUDINARY_API_SECRET,
   },
   // Firebase
   firebase: {
@@ -55,4 +68,9 @@ export const envs = {
   },
   openaiApiKey: envVars.OPENAI_API_KEY,
   geminiApiKey: envVars.GEMINI_API_KEY,
+  openrouterApiKey: envVars.OPENROUTER_API_KEY,
+  groqApiKey: envVars.GROQ_API_KEY,
+  hfToken: envVars.HF_TOKEN,
+  cfAccountId: envVars.CF_ACCOUNT_ID,
+  cfApiToken: envVars.CF_API_TOKEN,
 };

@@ -1,4 +1,7 @@
-import { PartialType } from '@nestjs/mapped-types';
-import { CreateOutfitDto } from './create-outfit.dto';
+import { IsOptional, IsString } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
-export class UpdateOutfitDto extends PartialType(CreateOutfitDto) {}
+export class UpdateOutfitDto {
+  @ApiPropertyOptional() @IsString() @IsOptional() name?: string;
+  @ApiPropertyOptional() @IsString() @IsOptional() description?: string;
+}

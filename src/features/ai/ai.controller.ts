@@ -69,4 +69,37 @@ export class AiController {
   async generateOutfit(@Body() generateOutfitDto: GenerateOutfitDto) {
     return this.aiService.generateOutfit(generateOutfitDto);
   }
+
+  @Post('translate')
+  async translate(@Body('text') text: string) {
+    if (!text) throw new BadRequestException('Se requiere texto');
+    return this.aiService.translateToSpanish(text);
+  }
+
+  @Post('generate-outfit-preview')
+  async generateOutfitPreview(
+    @Body('prompt') prompt: string,
+    @Body('userId') userId?: string,
+    @Body('outfitName') outfitName?: string,
+  ) {
+    if (!prompt) throw new BadRequestException('Se requiere un prompt');
+    return this.aiService.generateOutfitPreview(prompt, userId, outfitName);
+  }
+
+  @Post('analyze-selfie')
+  @UseInterceptors(FileInterceptor('file', {
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_, file, cb) => {
+      if (!['image/jpeg','image/jpg','image/png','image/webp'].includes(file.mimetype))
+        return cb(new BadRequestException('Solo se permiten imágenes JPG, PNG o WebP'), false);
+      cb(null, true);
+    },
+  }))
+  async analyzeSelfie(
+    @UploadedFile() file: Express.Multer.File,
+    @Body('isFullBody') isFullBody?: string,
+  ) {
+    if (!file) throw new BadRequestException('No se proporcionó ninguna imagen');
+    return this.aiService.analyzeSelfie(file.buffer, file.mimetype, isFullBody === 'true');
+  }
 }

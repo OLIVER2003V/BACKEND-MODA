@@ -4,12 +4,7 @@ import { UsersService } from '../users/users.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { User } from 'generated/prisma/client';
-
-export interface JwtPayload {
-  sub: string;
-  email: string;
-  name: string;
-}
+import { JwtPayload } from './dto/jwt-payload.dto';
 
 export interface AuthResponse {
   access_token: string;
@@ -83,8 +78,9 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       name: user.name ?? 'no-name',
+      role: user.role,
     };
-    
+
     return this.jwtService.sign(payload);
   }
 }

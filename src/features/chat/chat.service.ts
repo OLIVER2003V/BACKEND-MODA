@@ -11,10 +11,7 @@ export class ChatService {
 
   async getConversationsByUser(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
+    if (!user) throw new NotFoundException('Usuario no encontrado');
 
     return this.prisma.conversation.findMany({
       where: { userId },
@@ -23,10 +20,7 @@ export class ChatService {
         messages: { orderBy: { createdAt: 'asc' } },
         outfit: {
           include: {
-            garmentOutfits: {
-              include: { garment: true },
-              orderBy: { order: 'asc' },
-            },
+            garmentOutfits: { include: { garment: true }, orderBy: { order: 'asc' } },
           },
         },
       },
@@ -35,166 +29,200 @@ export class ChatService {
 
   async startConversation(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
 
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
-
-    const conversation = await this.prisma.conversation.create({
+    return this.prisma.conversation.create({
       data: {
         userId,
-        status: 'AWAITING_EVENT',
+        status: 'CHATTING',
         messages: {
           create: {
-            content:
-              '¡Hola! Soy tu asistente de moda. ¿A qué evento u ocasión necesitas asistir?',
+            content: '¡Hola! ✨ Soy tu estilista personal. Cuéntame, ¿para qué ocasión te estás preparando?',
             role: 'ASSISTANT',
           },
         },
       },
-      include: {
-        messages: { orderBy: { createdAt: 'asc' } },
-      },
+      include: { messages: { orderBy: { createdAt: 'asc' } } },
     });
-
-    return conversation;
   }
 
   async sendMessage(conversationId: string, content: string) {
     const conversation = await this.prisma.conversation.findUnique({
       where: { id: conversationId },
-      include: {
-        messages: { orderBy: { createdAt: 'asc' } },
-      },
+      include: { messages: { orderBy: { createdAt: 'asc' } } },
     });
+    if (!conversation) throw new NotFoundException('Conversación no encontrada');
 
-    if (!conversation) {
-      throw new NotFoundException('Conversación no encontrada');
+    if (conversation.status === 'AWAITING_FACE_IMAGE') {
+      throw new BadRequestException('Usa el botón de cámara para subir tu foto de rostro.');
     }
 
-    // Save the user message
+    if (conversation.status === 'GENERATING') {
+      throw new BadRequestException('Estoy generando tu outfit, por favor espera un momento...');
+    }
+
+    // Guardar mensaje del usuario
     await this.prisma.message.create({
-      data: {
-        content,
-        role: 'USER',
-        conversationId,
-      },
+      data: { content, role: 'USER', conversationId },
     });
 
-    switch (conversation.status) {
-      case 'AWAITING_EVENT':
-        return this.handleEvent(conversationId, content);
+    // Cargar perfil y prendas del usuario
+    const [userAttr, userWithClosets] = await Promise.all([
+      this.prisma.userAttribute.findFirst({ where: { userId: conversation.userId } }),
+      this.prisma.user.findUnique({
+        where: { id: conversation.userId },
+        include: { closets: { include: { garments: true } } },
+      }),
+    ]);
 
-      case 'AWAITING_WEATHER':
-        return this.handleWeather(conversationId, content, conversation.event!, conversation.userId);
+    const allGarments = userWithClosets?.closets.flatMap((c) => c.garments) ?? [];
+    const hasOutfit   = !!conversation.outfitId;
 
-      case 'AWAITING_HAIRSTYLE_CHOICE':
-        return this.handleHairstyleChoice(conversationId, content);
+    // Historial completo incluyendo el mensaje recién guardado
+    const allMessages = [
+      ...conversation.messages,
+      { role: 'USER' as const, content },
+    ];
 
-      case 'AWAITING_FACE_IMAGE':
-        throw new BadRequestException(
-          'Se espera una imagen de tu rostro. Usa el endpoint POST /chat/conversations/:id/face-image',
-        );
+    // Gemini decide qué hacer
+    const ai = await this.aiService.fashionChat({
+      messages:     allMessages,
+      userProfile:  userAttr,
+      garments:     allGarments,
+      hasOutfit,
+      savedEvent:   conversation.event,
+      savedWeather: conversation.weather,
+    });
 
-      case 'COMPLETED':
-        // Add a message indicating the conversation is finished
+    const effectiveWeather = conversation.weather ?? userAttr?.climate ?? null;
+
+    // ── Guardia: si la IA quiere generar outfit y ya hay uno, verificar que
+    // el usuario realmente lo pidió (no fue una inferencia errónea).
+    // Si el mensaje del usuario no pide explícitamente otro outfit → chat.
+    if (ai.action === 'generate_outfit' && hasOutfit) {
+      const lastAssistantMsg = conversation.messages.filter(m => m.role === 'ASSISTANT').at(-1)?.content ?? '';
+      const aiPromisedGeneration = /voy a (generar|armar|crear)|vamos a generar|te (voy a|armo|creo) (el|un) outfit|generar.*outfit|armar.*outfit|creo.*outfit/i.test(lastAssistantMsg);
+      const userConfirmed = /^(s[ií]|si|sí|yes|dale|ok|okey|claro|perfecto|bueno|va|genial|adelante|hazlo|generalo|gen[eé]ralo|está bien|de acuerdo|listo|vamos|venga)\b/i.test(content.trim());
+      const explicitRetry =
+        /otro|diferente|cambiar|no me gusta|no.*gust|opci[oó]n|alternativa|algo m[aá]s|nueva propuesta|nuevo outfit|dame otro|quiero otro|mu[eé]strame otro/i.test(content) ||
+        (aiPromisedGeneration && userConfirmed);
+      if (!explicitRetry) {
+        console.log('[chat.service] IA intentó generate_outfit pero usuario no lo pidió explícitamente → convirtiendo a chat');
+        ai.action = 'chat';
+      }
+    }
+
+    // ── Corrección 2: forzar generate_outfit si la IA preguntó el clima (que ya tenemos) ──
+    if (ai.action === 'chat' && !hasOutfit && effectiveWeather) {
+      const detectedEvent = ai.event ?? conversation.event ?? content;
+      const replyAskingWeather = /clima|temperatura|tiempo (que hace|habrá)|calor|frío|lluvi/i.test(ai.reply);
+
+      if (replyAskingWeather || conversation.event) {
+        console.log('[chat.service] Corrección clima: forzando generate_outfit. evento=%s clima=%s', detectedEvent, effectiveWeather);
+        ai.action  = 'generate_outfit';
+        ai.event   = detectedEvent;
+        ai.weather = effectiveWeather;
+        ai.reply   = `¡Perfecto! Voy a armar tu outfit para ${detectedEvent} ahora mismo ✨`;
+      } else if (conversation.messages.length <= 3 && !conversation.event) {
+        console.log('[chat.service] Corrección early: asumiendo mensaje como evento. evento=%s clima=%s', content, effectiveWeather);
+        ai.action  = 'generate_outfit';
+        ai.event   = content;
+        ai.weather = effectiveWeather;
+        if (replyAskingWeather) {
+          ai.reply = `¡Perfecto! Con eso ya tengo todo para tu outfit ✨`;
+        }
+      }
+    }
+
+    switch (ai.action) {
+      case 'generate_outfit': {
+        // Para nuevo outfit: usa el evento/clima ya guardados si la IA no envió nuevos
+        const event   = ai.event   ?? conversation.event   ?? 'un evento especial';
+        const weather = ai.weather ?? conversation.weather ?? userAttr?.climate ?? 'templado';
+
+        // Guardar la respuesta conversacional primero
         await this.prisma.message.create({
-          data: {
-            content:
-              'Esta conversación ya ha finalizado. Si deseas un nuevo outfit, inicia una nueva conversación.',
-            role: 'ASSISTANT',
-            conversationId,
-          },
+          data: { content: ai.reply, role: 'ASSISTANT', conversationId },
         });
 
-        return this.getConversationWithRelations(conversationId);
+        await this.prisma.conversation.update({
+          where: { id: conversationId },
+          data: { event, weather, status: 'GENERATING' },
+        });
 
-      default:
-        throw new BadRequestException('La conversación se encuentra en un estado no válido para recibir mensajes.');
-    }
-  }
+        try {
+          const result = await this.aiService.generateOutfit({
+            userId: conversation.userId,
+            event,
+            weather,
+          });
 
-  private async handleEvent(conversationId: string, event: string) {
-    await this.prisma.message.create({
-      data: {
-        content: `¡Genial! Un outfit para "${event}". ¿Cómo está el clima? (por ejemplo: caluroso, frío, templado, lluvioso)`,
-        role: 'ASSISTANT',
-        conversationId,
-      },
-    });
+          await this.prisma.conversation.update({
+            where: { id: conversationId },
+            data: { outfitId: result.outfit.id, status: 'CHATTING' },
+          });
 
-    await this.prisma.conversation.update({
-      where: { id: conversationId },
-      data: { event, status: 'AWAITING_WEATHER' },
-    });
+          await this.prisma.message.create({
+            data: {
+              content:
+                `✨ **${result.outfit.name}**\n${result.outfit.description ?? ''}\n\n` +
+                `¿Qué te parece? Si quieres también puedo recomendarte un peinado que combine perfectamente 💇`,
+              role: 'ASSISTANT',
+              conversationId,
+            },
+          });
+        } catch (err) {
+          // ── Retry automático una vez antes de mostrar error ──────────────
+          console.warn('[chat.service] generateOutfit falló, reintentando...', (err as Error).message.slice(0, 80));
+          try {
+            const result2 = await this.aiService.generateOutfit({ userId: conversation.userId, event, weather });
+            await this.prisma.conversation.update({
+              where: { id: conversationId },
+              data: { outfitId: result2.outfit.id, status: 'CHATTING' },
+            });
+            await this.prisma.message.create({
+              data: {
+                content:
+                  `✨ **${result2.outfit.name}**\n${result2.outfit.description ?? ''}\n\n` +
+                  `¿Qué te parece? Si quieres también puedo recomendarte un peinado 💇`,
+                role: 'ASSISTANT',
+                conversationId,
+              },
+            });
+          } catch {
+            await this.prisma.conversation.update({
+              where: { id: conversationId },
+              data: { status: 'CHATTING' },
+            });
+            await this.prisma.message.create({
+              data: {
+                content: 'Lo siento, los servicios de IA están muy ocupados ahora mismo 😅 Escríbeme en un momento e intento de nuevo.',
+                role: 'ASSISTANT',
+                conversationId,
+              },
+            });
+          }
+        }
+        break;
+      }
 
-    return this.getConversationWithRelations(conversationId);
-  }
+      case 'request_face_photo': {
+        await this.prisma.conversation.update({
+          where: { id: conversationId },
+          data: { status: 'AWAITING_FACE_IMAGE' },
+        });
+        await this.prisma.message.create({
+          data: { content: ai.reply, role: 'ASSISTANT', conversationId },
+        });
+        break;
+      }
 
-  private async handleWeather(
-    conversationId: string,
-    weather: string,
-    event: string,
-    userId: string,
-  ) {
-    await this.prisma.conversation.update({
-      where: { id: conversationId },
-      data: { weather, status: 'GENERATING' },
-    });
-
-    // Generate outfit using the existing AI service
-    const result = await this.aiService.generateOutfit({ userId, event, weather });
-
-    // Update conversation with the generated outfit
-    await this.prisma.conversation.update({
-      where: { id: conversationId },
-      data: {
-        outfitId: result.outfit.id,
-        status: 'AWAITING_HAIRSTYLE_CHOICE',
-      },
-    });
-
-    await this.prisma.message.create({
-      data: {
-        content: `¡Aquí tienes tu outfit recomendado!\n\n**${result.outfit.name}**\n${result.outfit.description}\n\n¿Te gustaría recibir una recomendación de peinado que combine con tu outfit? (sí/no)`,
-        role: 'ASSISTANT',
-        conversationId,
-      },
-    });
-
-    return this.getConversationWithRelations(conversationId);
-  }
-
-  private async handleHairstyleChoice(conversationId: string, content: string) {
-    const positive = /^(s[ií]|si|yes|dale|claro|por supuesto|ok|va|bueno|quiero)$/i;
-    const userWants = positive.test(content.trim());
-
-    if (userWants) {
-      await this.prisma.conversation.update({
-        where: { id: conversationId },
-        data: { status: 'AWAITING_FACE_IMAGE' },
-      });
-
-      await this.prisma.message.create({
-        data: {
-          content: '¡Perfecto! Envía una foto de tu rostro y te recomendaré el peinado ideal para ti.',
-          role: 'ASSISTANT',
-          conversationId,
-        },
-      });
-    } else {
-      await this.prisma.conversation.update({
-        where: { id: conversationId },
-        data: { status: 'COMPLETED' },
-      });
-
-      await this.prisma.message.create({
-        data: {
-          content: '¡Listo! Tu outfit está preparado. Si necesitas otro, inicia una nueva conversación.',
-          role: 'ASSISTANT',
-          conversationId,
-        },
-      });
+      default: {
+        await this.prisma.message.create({
+          data: { content: ai.reply, role: 'ASSISTANT', conversationId },
+        });
+        break;
+      }
     }
 
     return this.getConversationWithRelations(conversationId);
@@ -204,40 +232,30 @@ export class ChatService {
     const conversation = await this.prisma.conversation.findUnique({
       where: { id: conversationId },
     });
-
-    if (!conversation) {
-      throw new NotFoundException('Conversación no encontrada');
-    }
+    if (!conversation) throw new NotFoundException('Conversación no encontrada');
 
     if (conversation.status !== 'AWAITING_FACE_IMAGE') {
       throw new BadRequestException('La conversación no espera una imagen de rostro en este momento.');
     }
 
     await this.prisma.message.create({
-      data: {
-        content: '[Imagen de rostro enviada]',
-        role: 'USER',
-        conversationId,
-      },
+      data: { content: '[Imagen de rostro enviada]', role: 'USER', conversationId },
     });
 
-    // Get available hairstyles
     const hairstyles = await this.prisma.hairstyle.findMany();
 
     if (hairstyles.length === 0) {
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'COMPLETED' },
+        data: { status: 'CHATTING' },
       });
-
       await this.prisma.message.create({
         data: {
-          content: 'Lo siento, aún no hay peinados disponibles en el catálogo. ¡Tu outfit está listo de todas formas!',
+          content: 'Aún no hay peinados en el catálogo, pero tu outfit está listo. ¿Puedo ayudarte con algo más?',
           role: 'ASSISTANT',
           conversationId,
         },
       });
-
       return this.getConversationWithRelations(conversationId);
     }
 
@@ -252,43 +270,35 @@ export class ChatService {
 
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'COMPLETED' },
+        data: { status: 'CHATTING' },
       });
 
       await this.prisma.message.create({
         data: {
-          content: `**Peinado recomendado:**\n\n${recommended?.description || 'Peinado seleccionado'}\n\n**Por que este peinado?**\n${result.explanation}`,
+          content:
+            `**Peinado recomendado:**\n\n${recommended?.description ?? 'Peinado seleccionado'}\n\n` +
+            `**¿Por qué este peinado?**\n${result.explanation}\n\n` +
+            `¿Hay algo más en lo que te pueda ayudar? 😊`,
           role: 'ASSISTANT',
           conversationId,
         },
       });
 
       const conv = await this.getConversationWithRelations(conversationId);
-
-      return {
-        ...conv,
-        recommendedHairstyle: recommended ?? null,
-      };
-    } catch (error) {
-      // Si la IA falla, completar la conversación con un mensaje de error
+      return { ...conv, recommendedHairstyle: recommended ?? null };
+    } catch {
       await this.prisma.conversation.update({
         where: { id: conversationId },
-        data: { status: 'COMPLETED' },
+        data: { status: 'CHATTING' },
       });
-
       await this.prisma.message.create({
         data: {
-          content: 'No se pudo analizar la imagen en este momento. Tu outfit sigue listo.',
+          content: 'No pude analizar la imagen ahora mismo 😕 Pero tu outfit sigue listo. ¿Puedo ayudarte con algo más?',
           role: 'ASSISTANT',
           conversationId,
         },
       });
-
-      if (error instanceof BadRequestException || error instanceof NotFoundException) {
-        throw error;
-      }
-
-      throw new BadRequestException(`Error al procesar la imagen: ${error.message}`);
+      return this.getConversationWithRelations(conversationId);
     }
   }
 
@@ -299,10 +309,7 @@ export class ChatService {
         messages: { orderBy: { createdAt: 'asc' } },
         outfit: {
           include: {
-            garmentOutfits: {
-              include: { garment: true },
-              orderBy: { order: 'asc' },
-            },
+            garmentOutfits: { include: { garment: true }, orderBy: { order: 'asc' } },
           },
         },
       },

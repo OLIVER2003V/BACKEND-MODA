@@ -12,14 +12,15 @@ export class UserAttributeController {
     return this.userAttributeService.create(createUserAttributeDto);
   }
 
-  @Get(':userId')
-  getByUserId(@Param('userId') userId: string) {
-    return this.userAttributeService.findByUserId(userId);
-  }
-
   @Get()
   findAll() {
     return this.userAttributeService.findAll();
+  }
+
+  // Ruta específica "by-user" antes de la genérica :id
+  @Get('by-user/:userId')
+  getByUserId(@Param('userId') userId: string) {
+    return this.userAttributeService.findByUserId(userId);
   }
 
   @Get(':id')

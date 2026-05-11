@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Storage } from '@google-cloud/storage';
+import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
 import { envs } from 'src/config/envs';
+import { Readable } from 'node:stream';
 
 export interface UploadedFile {
   url: string;
@@ -11,133 +12,77 @@ export interface UploadedFile {
 @Injectable()
 export class StorageService {
   private readonly logger = new Logger(StorageService.name);
-  private storage: Storage;
-  private bucketName: string;
 
   constructor() {
-    const { gcs } = envs;
+    const { cloudName, apiKey, apiSecret } = envs.cloudinary;
 
-    if (!gcs.keyFilePath || !gcs.bucketName) {
-      this.logger.warn(
-        'GCS credentials not configured. Storage service will not work.',
-      );
-      return;
-    }
-
-    this.bucketName = gcs.bucketName;
-    this.storage = new Storage({
-      keyFilename: gcs.keyFilePath,
+    cloudinary.config({
+      cloud_name: cloudName,
+      api_key: apiKey,
+      api_secret: apiSecret,
     });
 
-    this.logger.log('GCS Storage initialized successfully');
+    this.logger.log('Cloudinary Storage initialized successfully');
   }
 
-  // ---------- UPLOAD DESDE MULTER ----------
   async uploadFile(
     file: Express.Multer.File,
     folder?: string,
   ): Promise<UploadedFile> {
-    this.ensureStorage();
-
-    const bucket = this.storage.bucket(this.bucketName);
-    const fileName = this.generateFileName(file.originalname, folder);
-    const blob = bucket.file(fileName);
-
-    await blob.save(file.buffer, {
-      contentType: file.mimetype,
-      metadata: {
-        originalName: file.originalname,
-      },
-    });
-
-    // 🔐 URL firmada (NO pública)
-    const url = await this.getSignedUrl(fileName);
-
-    this.logger.log(`File uploaded: ${fileName}`);
-
+    const result = await this.uploadStream(file.buffer, file.mimetype, folder);
+    this.logger.log(`File uploaded: ${result.public_id}`);
     return {
-      url,
-      fileName,
-      bucket: this.bucketName,
+      url: result.secure_url,
+      fileName: result.public_id,
+      bucket: envs.cloudinary.cloudName,
     };
   }
 
-  // ---------- UPLOAD DESDE BUFFER ----------
   async uploadBuffer(
     buffer: Buffer,
     originalName: string,
     mimeType: string,
     folder?: string,
   ): Promise<UploadedFile> {
-    this.ensureStorage();
-
-    const bucket = this.storage.bucket(this.bucketName);
-    const fileName = this.generateFileName(originalName, folder);
-    const blob = bucket.file(fileName);
-
-    await blob.save(buffer, {
-      contentType: mimeType,
-      metadata: {
-        originalName,
-      },
-    });
-
-    // 🔐 URL firmada (NO pública)
-    const url = await this.getSignedUrl(fileName);
-
-    this.logger.log(`File uploaded: ${fileName}`);
-
+    const result = await this.uploadStream(buffer, mimeType, folder);
+    this.logger.log(`File uploaded: ${result.public_id}`);
     return {
-      url,
-      fileName,
-      bucket: this.bucketName,
+      url: result.secure_url,
+      fileName: result.public_id,
+      bucket: envs.cloudinary.cloudName,
     };
   }
 
-  // ---------- DELETE ----------
   async deleteFile(fileName: string): Promise<void> {
-    this.ensureStorage();
-
-    const bucket = this.storage.bucket(this.bucketName);
-    await bucket.file(fileName).delete();
-
+    await cloudinary.uploader.destroy(fileName);
     this.logger.log(`File deleted: ${fileName}`);
   }
 
-  // ---------- SIGNED URL ----------
-  async getSignedUrl(
-    fileName: string,
-    expiresInMinutes = 5760,
-  ): Promise<string> {
-    this.ensureStorage();
+  async getSignedUrl(fileName: string): Promise<string> {
+    const result = await cloudinary.api.resource(fileName);
+    return result.secure_url;
+  }
 
-    const bucket = this.storage.bucket(this.bucketName);
-    const [url] = await bucket.file(fileName).getSignedUrl({
-      version: 'v4',
-      action: 'read',
-      expires: Date.now() + expiresInMinutes * 60 * 1000,
+  private uploadStream(
+    buffer: Buffer,
+    mimeType: string,
+    folder?: string,
+  ): Promise<UploadApiResponse> {
+    return new Promise((resolve, reject) => {
+      const options: Record<string, unknown> = {
+        resource_type: 'auto',
+      };
+      if (folder) options.folder = folder;
+
+      const uploadStream = cloudinary.uploader.upload_stream(
+        options,
+        (error, result) => {
+          if (error) return reject(new Error(error.message));
+          resolve(result!);
+        },
+      );
+
+      Readable.from(buffer).pipe(uploadStream);
     });
-
-    return url;
-  }
-
-  // ---------- HELPERS ----------
-  private ensureStorage() {
-    if (!this.storage || !this.bucketName) {
-      throw new Error('Storage service is not configured');
-    }
-  }
-
-  private generateFileName(originalName: string, folder?: string): string {
-    const timestamp = Date.now();
-    const randomString = Math.random().toString(36).substring(2, 15);
-    const extension = originalName.split('.').pop();
-    const baseName = originalName
-      .replace(/\.[^/.]+$/, '')
-      .replace(/[^a-zA-Z0-9]/g, '_');
-
-    const fileName = `${baseName}_${timestamp}_${randomString}.${extension}`;
-
-    return folder ? `${folder}/${fileName}` : fileName;
   }
 }

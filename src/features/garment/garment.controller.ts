@@ -121,6 +121,12 @@ export class GarmentController {
     return this.garmentService.findAll();
   }
 
+  @Get('user/:userId')
+  @ApiOperation({ summary: 'Obtener todas las prendas de un usuario' })
+  findByUser(@Param('userId') userId: string) {
+    return this.garmentService.findByUserId(userId);
+  }
+
   @Get('closet/:closetId')
   @ApiOperation({ summary: 'Obtener prendas por closet' })
   findByCloset(@Param('closetId') closetId: string) {
@@ -165,6 +171,12 @@ export class GarmentController {
     file?: Express.Multer.File,
   ) {
     return this.garmentService.update(id, dto, file);
+  }
+
+  @Patch(':id/describe')
+  @ApiOperation({ summary: 'Generar descripción con IA para una prenda existente' })
+  describe(@Param('id') id: string) {
+    return this.garmentService.regenerateDescription(id);
   }
 
   @Delete(':id')

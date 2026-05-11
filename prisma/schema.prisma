@@ -14,12 +14,20 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  ADMIN
+  CLIENT
+}
+
 model User {
   id               String            @id @default(cuid())
   email            String            @unique
   name             String?
+  role             UserRole          @default(CLIENT)
   isActive         Boolean           @default(true)
   fcmToken         String?
+  profilePhoto     String?           // Cloudinary URL of uploaded photo
+  avatarStyle      String?           // DiceBear style key, e.g. "adventurer"
   password         String
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
@@ -34,13 +42,38 @@ model User {
 model UserAttribute {
   id String @id @default(cuid())
 
-  gender     String?
-  age        Int?
-  stature    Float?
-  weight     Float?
-  profession String?
-  testType   String?
-  faceType   String?
+  // Datos físicos básicos
+  gender   String?
+  age      Int?
+  stature  Float?   // cm
+  weight   Float?   // kg
+  bodyType String?  // PEAR | RECTANGLE | HOURGLASS | APPLE | INVERTED_TRIANGLE
+
+  // Apariencia (puede venir de cámara/IA)
+  skinTone  String?  // reemplaza testType — LIGHT | MEDIUM_LIGHT | MEDIUM | MEDIUM_DARK | DARK
+  faceType  String?  // OVAL | ROUND | SQUARE | HEART | OBLONG
+  hairColor String?  // BLACK | BROWN | BLONDE | RED | GRAY | WHITE | OTHER
+  hairType  String?  // STRAIGHT | WAVY | CURLY | COILY
+  eyeColor  String?  // BROWN | HAZEL | BLUE | GREEN | GRAY | OTHER
+
+  // Estilo y preferencias
+  preferredStyles String[] // CASUAL | FORMAL | STREETWEAR | BOHEMIAN | MINIMALIST | SPORTY | ELEGANT
+  favoriteColors  String[] // nombres de colores
+  avoidColors     String[] // colores que evita
+
+  // Apariencia extendida
+  skinSubtone  String?  // WARM | COOL | NEUTRAL
+
+  // Contexto de vida
+  profession   String?
+  climate      String?  // TROPICAL | DRY | TEMPERATE | CONTINENTAL | POLAR
+  climateCity  String?  // ciudad/región para override manual de clima
+
+  // Compras (opcionales, activados por shoppingEnabled)
+  shoppingEnabled Boolean @default(false)
+  clothingSize String?  // XS | S | M | L | XL | XXL
+  shoeSize     Float?   // número de calzado
+  budget       String?  // LOW | MEDIUM | HIGH | LUXURY
 
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
@@ -139,6 +172,7 @@ model PostInteraction {
 }
 
 enum ConversationStatus {
+  CHATTING
   AWAITING_EVENT
   AWAITING_WEATHER
   GENERATING
