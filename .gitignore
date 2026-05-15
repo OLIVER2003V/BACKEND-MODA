@@ -62,14 +62,14 @@ credentials/*
 .claude
 
 # AI Services 
-ai-service/venv
-ai-service/__pycache__
-ai-service/dataset
-ai-service/model
+ai-service/venv/
+ai-service/__pycache__/
+ai-service/dataset/
+ai-service/model/
 
 # Python 
 *.pyc
-.*pyo
+*.pyo
 __pycache__/
 
 
