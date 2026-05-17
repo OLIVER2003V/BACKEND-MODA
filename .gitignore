@@ -66,6 +66,7 @@ ai-service/venv/
 ai-service/__pycache__/
 ai-service/dataset/
 ai-service/model/
+ai-service/test_gpu.py
 
 # Python 
 *.pyc
