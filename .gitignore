@@ -67,6 +67,7 @@ ai-service/__pycache__/
 ai-service/dataset/
 ai-service/model/
 ai-service/test_gpu.py
+ai-service/upload_model.py
 
 # Python 
 *.pyc

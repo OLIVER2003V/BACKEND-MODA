@@ -6,7 +6,7 @@ import torch
 app = FastAPI()
 
 # 1. Cargar modelo entrenado 
-MODEL_PATH = "./model"
+MODEL_PATH = "SWproyect/sentiment-moda-es"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH)
 model.eval()
@@ -27,7 +27,7 @@ def predecir(texto: str):
     with torch.no_grad():
         outputs = model(**inputs)
 
-    probs = torch.softmax(outputs.logits, dim=1).squeeze().tolist()
+    probs = torch.softmax(outputs.logits, dim=1)[0].tolist()
     label = "positivo" if probs[1] > probs[0] else "negativo"
 
     return {
