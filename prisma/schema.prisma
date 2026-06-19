@@ -36,6 +36,11 @@ model User {
   postInteractions PostInteraction[]
   conversations    Conversation[]
 
+  //nuevas relaciones
+  createdGroups    Group[]           @relation("GroupCreator")
+  memberships      Member[]
+  messagesGroup    MessageGroup[]
+
   @@index([email])
 }
 
@@ -221,4 +226,46 @@ model Hairstyle {
   gender      String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model Group {
+  id          String    @id @default(cuid())
+  name        String 
+  description String?
+  imageUrl    String?
+  active      Boolean   @default(true)
+  createdBy   String 
+  creator     User      @relation("GroupCreator", fields: [createdBy], references: [id])
+  members     Member[]
+  messages    MessageGroup[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([createdBy])
+}
+
+model Member {
+  id          String    @id @default(cuid())
+  userId      String 
+  groupId     String 
+  user        User      @relation(fields: [userId], references: [id])
+  group       Group     @relation(fields: [groupId], references: [id])
+  joinedAt    DateTime  @default(now())
+
+
+  @@unique([userId, groupId])
+  @@index([groupId])
+}
+
+model MessageGroup {
+  id        String   @id @default(cuid())
+  userId    String
+  groupId   String
+  content   String
+  type      String   @default("text")
+  user      User     @relation(fields: [userId], references: [id])
+  group     Group    @relation(fields: [groupId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([groupId, createdAt])
 }
